@@ -1,0 +1,27 @@
+{
+    "id": "06985E28",
+    "path": "D:/R shiny app/helper.R",
+    "project_path": "helper.R",
+    "type": "r_source",
+    "hash": "294113399",
+    "contents": "",
+    "dirty": false,
+    "created": 1713169058278.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "11,45",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1713432860,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1713432860944,
+    "read_only": false,
+    "read_only_alternatives": []
+}

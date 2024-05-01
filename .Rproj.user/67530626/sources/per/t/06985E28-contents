@@ -1,0 +1,24 @@
+goal_data <- data.frame(Date = as.Date(character()),
+                        Calories_Goal = double(), 
+                        Fats_Goal = double(), 
+                        Protein_Goal = double(), 
+                        Sugar_Goal = double(),
+                        stringsAsFactors = FALSE)
+
+
+intake_data <- data.frame(Date = as.Date(character()),
+                        ID = integer(),
+                        Name = character(),
+                        Calories = double(), 
+                        Fats = double(), 
+                        Protein = double(), 
+                        Sugar = double(),
+                        stringsAsFactors = FALSE)
+
+
+# Export a data frame to a text file using write.table()
+write.table(intake_data,
+            file = "intake_data.csv",
+            sep = ",",
+            row.names = TRUE,
+)

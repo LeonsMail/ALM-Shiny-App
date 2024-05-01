@@ -1,0 +1,305 @@
+#install.packages("shiny")
+library(shiny)
+library(shinydashboard)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+
+
+data <- read_excel('dataset_MyFoodData.xlsx')
+goal_data <- read.csv('goal_data.csv')
+# Convert Date column to Date type with matching format
+goal_data$Date <- as.Date(goal_data$Date, format = "%d-%m-%Y")
+
+intake_data <- read.csv('intake_data.csv')
+# Convert Date column to Date type with matching format
+intake_data$Date <- as.Date(intake_data$Date, format = "%d-%m-%Y")
+
+
+
+# UI function for setting goals
+goal_ui <- function() {
+  fluidRow(
+    column(6,
+           numericInput("goal_calories", "Goal Calories", value = 2000),
+           numericInput("goal_fats", "Goal Fats (g)", value = 70),
+           numericInput("goal_protein", "Goal Protein (g)", value = 50),
+           numericInput("goal_sugar", "Goal Sugar (g)", value = 30),
+           actionButton("set_goals", "Set Goals")
+    )
+  )
+}
+
+
+# UI function for adding food
+add_food_ui <- function() {
+  fluidRow(
+    column(6,
+           selectizeInput("food_name", "Food Item", choices = NULL),
+           actionButton("add_food", "Add Food")
+    )
+  )
+}
+
+
+daily_intake_tracker <- function(){
+  
+  total_intake_today <- intake_data %>% filter(Date == Sys.Date())%>%
+    mutate_at(vars(-Date, -ID, -Name), ~ifelse(. == "NULL", NA, as.numeric(.))) %>%
+    summarise(
+      Total_Calories = sum(Calories, na.rm = TRUE),
+      Total_Fats = sum(Fats, na.rm = TRUE),
+      Total_Protein = sum(Protein, na.rm = TRUE),
+      Total_Sugar = sum(Sugar, na.rm = TRUE))
+  
+  
+  # Create a string stating the summed up values for each column
+  return(list(Total_Calories = total_intake_today$Total_Calories,
+              Total_Fats = total_intake_today$Total_Fats,
+              Total_Protein = total_intake_today$Total_Protein,
+              Total_Sugar =  total_intake_today$Total_Sugar))
+  
+}
+
+
+plot_weekly_trend <- function(Date, nutrient) {
+  
+  # Filter data for the specified week
+  start_of_week <- Date - lubridate::wday(Date) + 1
+  end_of_week <- start_of_week + 6
+  
+  weekly_data <- intake_data %>%
+    filter(Date >= start_of_week & Date <= end_of_week)
+  
+  # Aggregate nutrient values for the specified nutrient by date
+  weekly_summary <- weekly_data %>%
+    group_by(Date) %>%
+    mutate_at(vars(-Date, -ID, -Name), ~ifelse(. == "NULL", NA, as.numeric(.))) %>%
+    summarise(total_nutrient = sum(!!sym(nutrient), na.rm = TRUE)) %>%
+    mutate(selected_date = ifelse(Date == {{Date}}, "True", "False"))
+  
+  print(weekly_summary)
+  
+  
+  # Get the goal value for the specified nutrient on the given date
+  goal_value <- goal_data %>%filter(Date == {{Date}})%>%
+    pull(!!sym(paste(nutrient,"_Goal", sep='')))
+  
+  
+  # Create a bar plot
+  p <- ggplot(weekly_summary, aes(x = Date, y = total_nutrient, fill = selected_date)) +
+    geom_bar(stat = "identity") +
+    geom_hline(yintercept = goal_value, color = "red", linetype = "dashed", size = 1) +
+    labs(title = paste("Weekly Trend for", nutrient),
+         x = "Date",
+         y = nutrient,
+         caption = paste("Goal for", nutrient, "on", format(Date, "%d-%m-%Y"), ":", goal_value)) +
+    scale_x_date(labels = function(x) weekdays(x, abbreviate = TRUE)) +
+    theme_minimal()+
+    scale_fill_manual(values = c("False" = "skyblue", "True" = "orange"), guide =  FALSE)  # Change colors here
+  
+  return(p)
+}
+
+
+
+
+# Function to generate custom HTML for the third tab
+custom_tab_html <- function() {
+  '
+  <div class="container">
+    <div class="graph">
+      <!-- Weekly graph code goes here -->
+      <h2>Weekly Nutrition Trends</h2>
+      <!-- Insert your weekly graph here -->
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <h2>Calories</h2>
+        <div class="progress-bar">
+          <div class="progress" id="caloriesProgress" style="width: 50%;"></div>
+        </div>
+        <p id="caloriesInfo">500/1000</p>
+      </div>
+
+      <div class="card">
+        <h2>Fats</h2>
+        <div class="progress-bar">
+          <div class="progress" id="fatsProgress" style="width: 75%;"></div>
+        </div>
+        <p id="fatsInfo">30/40</p>
+      </div>
+
+      <div class="card">
+        <h2>Protein</h2>
+        <div class="progress-bar">
+          <div class="progress" id="proteinProgress" style="width: 60%;"></div>
+        </div>
+        <p id="proteinInfo">25/50</p>
+      </div>
+
+      <div class="card">
+        <h2>Sugars</h2>
+        <div class="progress-bar">
+          <div class="progress" id="sugarsProgress" style="width: 45%;"></div>
+        </div>
+        <p id="sugarsInfo">15/30</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Function to update progress bars and display information
+  function updateProgress(dailyValues, intake) {
+    for (var nutrient in dailyValues) {
+      c
+    }
+  }
+
+  // Sample data (replace with actual data)
+  var dailyValues = {
+    calories: <%= daily_totals$Total_Calories %>,
+    fats: <%= daily_totals$Total_Fats %>,
+    protein: <%= daily_totals$Total_Protein %>,
+    sugars: <%= daily_totals$Total_Sugar %>
+  };
+  var intake = {
+    calories: <%= daily_intake$Calories %>,
+    fats: <%= daily_intake$Fats %>,
+    protein: <%= daily_intake$Protein %>,
+    sugars: <%= daily_intake$Sugar %>
+  };
+
+    // Call the function to initially update progress bars
+  updateProgress(dailyValues, intake);
+  </script>
+  '
+}
+
+# Define the UI for the app
+ui <- fluidPage(
+  titlePanel("Personalized Food Tracker App"),
+  
+  tabsetPanel(
+    tabPanel("Set Goals", goal_ui()),
+    tabPanel("Add Food", add_food_ui()),
+    tabPanel("Custom Tab", HTML(custom_tab_html()))
+  )
+)
+
+
+
+# Define the server logic for the app
+server <- function(input, output, session) {
+  
+  # Define reactive values to store user data
+  user_data <- reactiveValues(
+    goals = NULL,
+    daily_intake = NULL
+  )
+  
+  # Update user goals ----------------------------------------------------------
+  observeEvent(input$set_goals, {
+    
+    user_data$goals <- data.frame(
+      Date = Sys.Date(),
+      Calories_Goal = input$goal_calories,
+      Fats_Goal = input$goal_fats,
+      Protein_Goal = input$goal_protein,
+      Sugar_Goal = input$goal_sugar
+    )
+    
+    # Export a data frame to a text file using write.table()
+    write.table(user_data$goals,
+                file = "goal_data.csv",
+                sep = ",",
+                append = TRUE,
+                row.names = FALSE, 
+                col.names = FALSE
+    )
+    
+  })
+  
+  # Update selectize input choices for food items --------------------------------
+  updateSelectizeInput(session, 'food_name', 'Food Item', 
+                       choices = data$name, server = TRUE)
+  
+  # Add food to daily intake ---------------------------------------------------
+  observeEvent(input$add_food, {
+    
+    # selected food item name
+    food_item <- isolate(input$food_name)
+    
+    # filter the row for the food item
+    selected_food <- data %>% filter(name == food_item)
+    
+    if (nrow(selected_food) > 0) {
+      
+      # fetch the relevant row
+      food_nutrition <- selected_food[, c("ID", "Calories", "Fat (g)", "Protein (g)", "Sugars (g)")]
+      
+      user_data$daily_intake <- data.frame(
+        Date = Sys.Date(),
+        ID = food_nutrition$ID,
+        Food = food_item,
+        Calories = food_nutrition$Calories,
+        Fats = food_nutrition$`Fat (g)`,
+        Protein = food_nutrition$`Protein (g)`,
+        Sugar = food_nutrition$`Sugars (g)`
+      )
+      
+      # Export a data frame to a text file using write.table()
+      write.table(user_data$daily_intake,
+                  file = "intake_data.csv",
+                  sep = ",",
+                  append = TRUE,
+                  row.names = FALSE, 
+                  col.names = FALSE
+      )
+      
+      print('added intake')
+      
+    } else {
+      # Handle case where food item is not found in the dataset
+      showModal(modalDialog(
+        title = "Error",
+        "Food item not found in database. Please enter a valid food item."
+      ))
+    }
+  })
+  
+  # Render daily intake summary for calories ------------------------------------
+  output$calories <- renderPrint({
+    daily_totals <- daily_intake_tracker()
+    paste("Total Calories:", daily_totals$Total_Calories)
+  })
+  
+  # Render daily intake summary for fat -----------------------------------------
+  output$fats <- renderPrint({
+    daily_totals <- daily_intake_tracker()
+    paste("Total Fats:", daily_totals$Total_Fats)
+  })
+  
+  # Render daily intake summary for protein -------------------------------------
+  output$protein <- renderPrint({
+    daily_totals <- daily_intake_tracker()
+    paste("Total Protein:", daily_totals$Total_Protein)
+  })
+  
+  # Render daily intake summary for sugar ---------------------------------------
+  output$sugar <- renderPrint({
+    daily_totals <- daily_intake_tracker()
+    paste("Total Sugar:", daily_totals$Total_Sugar)
+  })
+  
+  # Render weekly trends plot ---------------------------------------------------
+  output$weekly_trends_plot <- renderPlot({ 
+    plot_weekly_trend(as.Date(input$date), input$nutrient)
+  })
+}
+
+
+# Run the application
+shinyApp(ui = ui, server = server)

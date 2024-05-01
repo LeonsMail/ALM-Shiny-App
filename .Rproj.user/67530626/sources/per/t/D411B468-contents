@@ -1,0 +1,457 @@
+#install.packages("shinydashboard")
+#install.packages("sf")
+#install.packages("leaflet")
+#install.packages("plotly")
+
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(cluster)
+library(shiny)
+library(shinydashboard)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(leaflet.extras)
+
+
+
+
+# read data ####################################################################
+
+d1 <- read.csv('data.csv')
+d1['month'] <- month.abb[d1$month]
+months <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul","Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+u1 <- read.csv('uber/uber-raw-data-apr14.csv')
+u2 <- read.csv('uber/uber-raw-data-aug14.csv')
+u3 <- read.csv('uber/uber-raw-data-jul14.csv')
+u4 <- read.csv('uber/uber-raw-data-jun14.csv')
+u5 <- read.csv('uber/uber-raw-data-may14.csv')
+u6 <- read.csv('uber/uber-raw-data-sep14.csv')
+
+
+# Utility functions ############################################################
+
+
+# function to plot first graph of first tab
+draw_plot1_0 <- function(choice){
+  sub_df <- d1%>%filter(month == choice)
+  sub_df <- sub_df%>%group_by(dayofweek)%>% summarise(avg_fare = mean(fare_amount))
+  # reorder levels
+  sub_df$dayofweek <- factor(sub_df$dayofweek, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+  sub_df <- sub_df[order(levels(sub_df$dayofweek)),]
+  
+  p <- ggplot(sub_df) + 
+    geom_bar(aes(x=dayofweek, y=avg_fare, fill = dayofweek), stat="identity") +
+    geom_point(aes(x=dayofweek, y=avg_fare, text = paste("Month:", choice,
+                                                                  "<br>Day:", dayofweek,
+                                                                  "<br>Avg fare: $",round(avg_fare,2)
+                                                                  )), color = 'black', size=3)+ 
+    geom_line(aes(x=dayofweek, y=avg_fare, group=1), color = 'black', size=1)+
+    ggtitle(paste0("Average fare per day of the week for ", choice))
+  
+  print(ggplotly(p, tooltip= "text"))
+}
+
+#draw_plot1_0("Jul")
+
+
+
+
+# function to plot second graph of first tab
+draw_plot1_1 <- function(choice){
+  sub_df <- d1%>%filter(month == choice)
+  sub_df <- sub_df%>%group_by(pickup_hour)%>% summarise(avg_fare = mean(fare_amount))
+  sub_df$pickup_hour <- as.factor(sub_df$pickup_hour)
+  
+  
+  
+  p <- ggplot(sub_df) + 
+    geom_bar(aes(x=pickup_hour, y=avg_fare, fill = pickup_hour, text = paste("Month:", choice,
+                                                                           "<br>Pickup hour", pickup_hour,
+                                                                           "<br>Avg fare: $",round(avg_fare,2))), stat="identity")+
+    ggtitle(paste0("Average fare for Pickup hours for ", choice))
+  
+  print(ggplotly(p, tooltip= "text"))
+}
+
+#draw_plot1_1("Apr")
+
+
+
+
+
+# function to get relevant dataframe
+get_frame <- function(input){
+  if(input == "Apr"){
+    return (u1)
+    
+  } else if ( input == "May"){
+    return (u5)
+    
+  } else if (input == "Jun"){
+    return (u4)
+    
+  } else if ( input == "Jul"){
+    return (u3)
+    
+  } else if ( input == " Aug"){
+    return(u2)
+    
+  } else { return (u6)}
+}
+
+
+#get_frame("Apr")
+
+
+
+
+
+
+# function to perform clustering and return cluster centers and labelled dataframe
+clustering <- function(df, hour){
+  
+  # manipulating data
+  df$Date.Time <- as.POSIXct(df$Date.Time, format = "%m/%d/%Y %H:%M:%S")
+  df$Time <- format(as.POSIXct(df$Date.Time, format = "%m/%d/%Y %H:%M:%S"), format="%H:%M:%S")
+  #new_df3$month <- factor(month(new_df3$Date.Time, label = TRUE))
+  df$hour <- hour(hms(df$Time))
+  
+  # filter dataframe based on hour
+  df <- df[df$hour == hour, ]
+  
+  
+  # creating a new dataframe with only coordinates to perform clustering
+  df_clust <- df[, c('Lat', 'Lon')]
+  
+  # perform k-means clustering for 15 clusters
+  model<- kmeans(df_clust, 15)
+  df['label'] <- model$cluster
+ 
+  # cluster centers
+  centers <- model$centers
+  
+  
+  return(list(centers, df))
+}
+
+
+#output <- clustering(u1, 9)
+
+#centers <- output[[1]]
+#df_new <-output[[2]]
+
+
+
+
+
+
+# function to draw leaflet map
+
+leaf_draw <- function(month, hour){
+  
+  # get relevant dataframe based on month
+  df1 <- get_frame(month)
+  
+  # perform clustering
+  output <- clustering(df1, hour)
+  
+  # dataframe for cluster centers
+  centers <- as.data.frame(output[[1]])
+  centers$name <- c(1:15)
+  
+  # labelled dataframe
+  df2 <-output[[2]]
+  
+  
+  # add cluster size to centers dataframe
+  centers$size <- as.data.frame(df2%>%group_by(label)%>%summarise(count = n()))$count
+  
+  
+  # getting geometry
+  df2 <- df2%>%
+    st_as_sf(coords = c("Lon", "Lat")) %>% 
+    st_sf(crs = 4326)
+  
+  
+  # get count for each cluster
+  cluster_count <- df2%>%group_by(label)%>%mutate(count = n())
+  
+  
+  # split the trips by cluster
+  cluster_split <- split(cluster_count, cluster_count$label)
+  
+  # get the coordinates for all of the points that are in a cluster
+  cluster_split_coord <- lapply( cluster_split[2:length( cluster_split)], st_coordinates)
+  
+ 
+  # compute which points lie on the convex hull of each cluster
+  cluster_split_chull <- lapply(cluster_split_coord, chull)
+  
+  
+  # keep only those points
+  cluster_outer <- lapply(seq_len(length(cluster_split_chull)), function(x, ...) {
+    cluster_split_coord[[x]][cluster_split_chull[[x]], ]
+  })
+  
+  
+  
+  # turn these points into a slightly buffered polygon
+  cluster_outer_sf <- lapply(cluster_outer, function(x) {
+    # append the last point so that a polygon can be drawn
+    x <- rbind(x, x[1, ])
+    # turn the points into a polygon
+    poly <- st_sfc(st_polygon(list(x))) %>%
+      as.data.frame() %>%
+      # set the crs system of the points
+      st_as_sf(crs = 4326) %>%
+      # transform the polygons
+      st_transform(3035) %>%
+      # buffer the polygons by 200 meters
+      st_buffer(200) %>%
+      # re-transorm the polygons
+      st_transform(4326)
+  })
+  
+  
+  
+  # bind the polygons together
+  clusters <- Reduce(rbind, cluster_outer_sf)
+  
+  
+  # set the count of points in no cluster to NA
+  cluster_count$count[cluster_count$cluster == 0] <- NA
+  
+
+  
+  
+  # define a custom palette
+  pal <- colorNumeric(
+    c("#E1F5C4", "#EDE574", "#F9D423", "#FC913A", "#FF4E50", "#CCE5FF", "#CCCCFF", "#E5FFCC", "#FFFF99", 
+      "#E0E0E0", "#CCCC00", "#FFCCE5", "#808000", "#00994C", "#990000"),
+    # colors depend on the count variable
+    domain = cluster_count$count,
+  )
+  
+  
+  # corrected html and css to show NA nicely in the legend 
+  # CSS to correct spacing
+  css_fix <- "div.info.legend.leaflet-control br {clear: both;}"
+  # Convert CSS to HTML
+  html_fix <- htmltools::tags$style(type = "text/css", css_fix)
+  
+  
+  # set icon for cluster centers
+  icons <- awesomeIcons(
+    icon = 'ios-star',
+    iconColor = 'black',
+    library = 'ion',
+    markerColor = "red"
+  )
+  
+  
+  # draw map
+  leaflet()%>%
+    addTiles() %>%
+    # add the polygons of the clusters
+    addPolygons(
+      data = clusters,
+      color = "black",
+      # set the opacity of the outline
+      opacity = 1,
+      # set the stroke width in pixels
+      weight = 1,
+      # set the fill opacity
+      fillOpacity = 0.2
+    )%>% addAwesomeMarkers(
+      data = centers,
+      # color the circles depending on the count
+      icon = icons,
+      #color = ~pal(cou),
+      # set the opacity of the circles
+      #opacity = 0.65,
+      # set the radius of the circles
+      #radius = 4,
+      # create custom labels
+      label = paste(
+        "Cluster:",
+        centers$name, "<br>",
+        "Latitude:",
+        centers$Lat, "<br>",
+        "Longitude:",
+        centers$Lon, "<br>",
+        "No.of trips:",
+        centers$size
+      ) %>%
+        lapply(htmltools::HTML),
+    )%>% addCircleMarkers(
+      data = cluster_count,
+      # color tt\he circles depending on the count
+      color = ~pal(count),
+      # set the opacity of the circles
+      opacity = 0.65,
+      # set the radius of the circles
+      radius = 3)
+}
+
+#leaf_draw("Jan", 10)
+
+
+
+# R Shiny dashboard ############################################################
+
+ui <- dashboardPage(
+  
+  dashboardHeader(),
+  
+  
+  dashboardSidebar(
+    sidebarMenu(
+    menuItem("Plot 1", tabName = "p1"),
+    menuItem("plot 2", tabName = "p2"),
+    menuItem("plot 3", tabName = "p3")
+  )),
+  
+  
+  dashboardBody(
+    
+    tabItems(
+      
+      # First tab content
+      tabItem(tabName = "p1",
+              
+    fluidRow(
+      column(width = 12,
+             inputPanel(
+               selectInput(
+                 "month",
+                 label = "Select month",
+                 choices = months
+               )
+             ),
+             
+             
+             box(
+               width = NULL, background = "black",
+                 "Plot 1.0",
+               plotlyOutput('minplot1.0', height= "40vh")
+               ),
+             
+             box(
+               width = NULL, background = "black",
+               "Plot 1.1",
+               plotlyOutput('minplot1.1')
+               #uiOutput("dynamic")
+             )
+             
+             
+             
+            )
+         )
+       ),
+    
+      # second tab content
+      tabItem(tabName = "p2",
+            
+            fluidRow(
+              column(width = 12,
+                     
+                     box(
+                       width = NULL, background = "black",
+                       "Plot 2",
+                       leafletOutput('minplot2')
+                     ),
+                     
+                     
+                     inputPanel(
+                       selectInput(
+                         "month_uber",
+                         label = "Select month",
+                         choices = c("Apr", "May", "Jun", "Jul", "Aug", "Sep")
+                       )
+                     ),
+                     
+                     sliderInput("hour", "Select hour of the day:",
+                                 min = 0, max = 23, value = 9
+                     ),
+                  )
+                )
+              ),
+    
+    
+      # third tab content
+      tabItem(tabName = "p3",
+            
+            fluidRow(
+              column(width = 12,
+                     
+                     box(
+                       width = NULL, background = "black",
+                       "Plot 3",
+                       plotOutput('minplot3')
+                       
+                     ),
+                     
+                     
+                     inputPanel(
+                       selectInput(
+                         "Months",
+                         label = "Select month to highlight",
+                         choices = months
+                        )
+                      )
+                    )
+                  )
+                )
+          )
+       )
+    )
+    
+
+
+
+
+server <- function(input, output) { 
+  
+  # first plot
+  output$minplot1.0 <- renderPlotly({draw_plot1_0(input$month)})
+  output$minplot1.1 <- renderPlotly({draw_plot1_1(input$month)})
+  
+  
+  
+  # second plot
+  output$minplot2 <- renderLeaflet({
+    
+      leaf_draw(input$month_uber, input$hour)
+
+      })
+  
+  
+  # third plot
+  filtered <- reactive({
+    sub_df <- d1%>%group_by(pickup_hour, month)%>% summarise(trips = n())
+    sub_df['pickup_hour'] <- as.factor(sub_df$pickup_hour)
+    
+    sub_df$mon <- ifelse((sub_df$month == input$Months), 1,0)
+    return(sub_df)
+  })
+  
+  
+  
+  output$minplot3 <- renderPlot({
+    ggplot(filtered(), aes_string(x="pickup_hour", y="trips", fill = "mon")) + 
+      geom_bar(stat = "identity")
+  
+  })
+ 
+  }
+
+
+
+shinyApp(ui, server)
+
+
+
